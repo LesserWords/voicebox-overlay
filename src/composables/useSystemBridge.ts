@@ -54,6 +54,29 @@ export function useSystemBridge() {
   };
 
   /**
+   * Reads current global shortcut from Rust.
+   */
+  const getShortcut = async (): Promise<string> => {
+    if (!isTauri()) return "alt+shift+space";
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return await invoke<string>("get_shortcut");
+    } catch (err) {
+      console.error("[System Bridge] Failed to get shortcut:", err);
+      return "";
+    }
+  };
+
+  /**
+   * Updates global shortcut via Rust. Throws on failure (invalid combo / conflict).
+   */
+  const setShortcut = async (shortcut: string): Promise<void> => {
+    if (!isTauri()) return;
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_shortcut", { shortcut });
+  };
+
+  /**
    * Invokes native Rust commands to hide the window.
    */
   const hideWindow = async () => {
@@ -129,5 +152,7 @@ export function useSystemBridge() {
     showWindow,
     hideWindow,
     readClipboardText,
+    getShortcut,
+    setShortcut,
   };
 }

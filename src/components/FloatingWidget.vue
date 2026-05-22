@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from "vue";
-import { GripHorizontal, X, Clipboard, Edit2, BookOpen, AlertCircle } from "@lucide/vue";
+import { ref, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { GripHorizontal, X, Clipboard, Edit2, BookOpen, AlertCircle, Settings } from "@lucide/vue";
 import { usePlayerStore } from "../stores/playerStore";
-import { useSystemBridge } from "../composables/useSystemBridge";
+import { useSystemBridge, isTauri } from "../composables/useSystemBridge";
 import { useAudioStream } from "../composables/useAudioStream";
 import AudioControls from "./AudioControls.vue";
+import SettingsPanel from "./SettingsPanel.vue";
 
 const store = usePlayerStore();
 const { hideWindow, readClipboardText } = useSystemBridge();
@@ -13,6 +14,23 @@ const { isLoading } = useAudioStream();
 const isEditing = ref(false);
 const localText = ref("");
 const textContainerRef = ref<HTMLDivElement | null>(null);
+const isSettingsOpen = ref(false);
+
+let unlistenSettings: (() => void) | null = null;
+
+onMounted(async () => {
+  if (isTauri()) {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    unlistenSettings = await win.listen("open-settings", () => {
+      isSettingsOpen.value = true;
+    });
+  }
+});
+
+onUnmounted(() => {
+  if (unlistenSettings) unlistenSettings();
+});
 
 // Trigger manual clipboard read
 const pasteFromClipboard = async () => {
@@ -69,7 +87,7 @@ watch(() => store.textChunks, () => {
 </script>
 
 <template>
-  <div class="glass-panel w-[450px] h-[600px] rounded-2xl overflow-hidden flex flex-col border border-white/10 select-none animate-slide-up text-slate-100">
+  <div class="glass-panel w-[450px] h-[600px] rounded-2xl overflow-hidden flex flex-col border border-white/10 select-none animate-slide-up text-slate-100 relative">
     <!-- Draggable Header Region -->
     <header 
       data-tauri-drag-region 
@@ -99,6 +117,15 @@ watch(() => store.textChunks, () => {
           title="Paste from Clipboard"
         >
           <Clipboard class="h-4 w-4" />
+        </button>
+
+        <!-- Settings -->
+        <button
+          @click="isSettingsOpen = true"
+          class="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 active:scale-95 transition-all"
+          title="Settings"
+        >
+          <Settings class="h-4 w-4" />
         </button>
 
         <!-- Hide Window Button -->
@@ -153,7 +180,7 @@ watch(() => store.textChunks, () => {
           <div class="space-y-1">
             <p class="text-sm font-semibold text-slate-300">No content loaded</p>
             <p class="text-[11px] leading-normal text-slate-500">
-              Copy any text to clipboard and press <kbd class="px-1.5 py-0.5 bg-slate-900 border border-white/10 rounded text-[10px]">Win/Cmd + Shift + Space</kbd> or click clipboard button above.
+              Copy any text to clipboard and press <kbd class="px-1.5 py-0.5 bg-slate-900 border border-white/10 rounded text-[10px]">Alt + Shift + Space</kbd> or click clipboard button above.
             </p>
           </div>
           <button
@@ -187,6 +214,9 @@ watch(() => store.textChunks, () => {
       <!-- Controls Panel Footer -->
       <AudioControls class="shrink-0" />
     </div>
+
+    <!-- Settings Overlay -->
+    <SettingsPanel v-if="isSettingsOpen" @close="isSettingsOpen = false" />
   </div>
 </template>
 
