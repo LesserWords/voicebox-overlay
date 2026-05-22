@@ -1,15 +1,28 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { GripHorizontal, X, Clipboard, Edit2, BookOpen, AlertCircle, Settings, Power } from "@lucide/vue";
+import { GripHorizontal, X, Clipboard, Edit2, BookOpen, AlertCircle, Settings, Power, RefreshCw } from "@lucide/vue";
 import { usePlayerStore } from "../stores/playerStore";
 import { useSystemBridge, isTauri } from "../composables/useSystemBridge";
 import { useAudioStream } from "../composables/useAudioStream";
+import { useProvider } from "../composables/useProvider";
 import AudioControls from "./AudioControls.vue";
 import SettingsPanel from "./SettingsPanel.vue";
 
 const store = usePlayerStore();
 const { hideWindow, quitApp, readClipboardText } = useSystemBridge();
 const { isLoading } = useAudioStream();
+const { refresh: refreshProvider } = useProvider();
+const isRefreshing = ref(false);
+
+const doRefresh = async () => {
+  if (isRefreshing.value) return;
+  isRefreshing.value = true;
+  try {
+    await refreshProvider();
+  } finally {
+    isRefreshing.value = false;
+  }
+};
 
 const isEditing = ref(false);
 const localText = ref("");
@@ -90,15 +103,20 @@ watch(() => store.textChunks, () => {
 </script>
 
 <template>
-  <div class="glass-panel w-[450px] h-[600px] rounded-2xl overflow-hidden flex flex-col border border-white/10 select-none animate-slide-up text-slate-100 relative">
+  <div class="glass-panel w-full h-full rounded-2xl overflow-hidden flex flex-col border border-white/10 select-none animate-slide-up text-slate-100 relative">
     <!-- Draggable Header Region -->
     <header 
       data-tauri-drag-region 
       class="h-14 bg-slate-950/80 border-b border-white/5 px-4 flex items-center justify-between cursor-move shrink-0"
     >
-      <div class="flex items-center space-x-2 pointer-events-none" data-tauri-drag-region>
-        <GripHorizontal class="h-4 w-4 text-slate-400" />
-        <span class="text-xs font-bold uppercase tracking-wider text-slate-300">Voicebox Overlay</span>
+      <div class="flex items-center space-x-2" data-tauri-drag-region>
+        <GripHorizontal class="h-4 w-4 text-slate-400 pointer-events-none" />
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-300 pointer-events-none">Voicebox Overlay</span>
+        <span
+          class="inline-block w-1.5 h-1.5 rounded-full pointer-events-none"
+          :class="store.providerHealthy ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]' : 'bg-red-500'"
+          :title="store.providerHealthy ? 'Audio source reachable' : 'Audio source unreachable'"
+        ></span>
       </div>
 
       <!-- Header Controls -->
@@ -120,6 +138,16 @@ watch(() => store.textChunks, () => {
           title="Paste from Clipboard"
         >
           <Clipboard class="h-4 w-4" />
+        </button>
+
+        <!-- Refresh / Reconnect Check -->
+        <button
+          @click="doRefresh"
+          :disabled="isRefreshing"
+          class="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 active:scale-95 transition-all disabled:opacity-50"
+          title="Re-check audio source"
+        >
+          <RefreshCw class="h-4 w-4" :class="isRefreshing ? 'animate-spin' : ''" />
         </button>
 
         <!-- Settings -->
