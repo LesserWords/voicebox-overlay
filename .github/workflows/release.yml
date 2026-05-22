@@ -57,9 +57,13 @@ jobs:
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
 
+      - name: Rename Executable (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: mv src-tauri/target/release/tauri-app.exe src-tauri/target/release/VoiceboxOverlay-Portable.exe
+
       - name: Upload Portable Executable (Windows)
         if: matrix.platform == 'windows-latest'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: src-tauri/target/release/VoiceboxOverlay.exe
+          files: src-tauri/target/release/VoiceboxOverlay-Portable.exe
