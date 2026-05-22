@@ -53,6 +53,6 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Voicebox Overlay ${{ github.ref_name }}'
           releaseBody: 'See the assets to download the version for your operating system.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.platform == 'macos-latest' && '--target universal-apple-darwin' || '' }}
