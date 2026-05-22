@@ -1,6 +1,6 @@
 import { ref, watch, onUnmounted } from "vue";
 import { usePlayerStore } from "../stores/playerStore";
-import { voiceboxClient } from "../api/voiceboxClient";
+import { getActiveProvider } from "../providers";
 
 let audioCtx: AudioContext | null = null;
 let currentSourceNode: AudioBufferSourceNode | null = null;
@@ -85,7 +85,7 @@ export function useAudioStream() {
 
     try {
       isFetchingNext = true;
-      const nextAudioBuffer = await voiceboxClient.generateAudio(nextText, store.activeProfileId);
+      const nextAudioBuffer = await getActiveProvider().generateAudio(nextText, store.activeProfileId);
       const decoded = await decodeAudio(nextAudioBuffer);
       cachedBuffer = decoded;
       cachedIndex = nextIndex;
@@ -129,7 +129,7 @@ export function useAudioStream() {
         cachedIndex = null;
       } else {
         // Fetch and decode immediately
-        const audioData = await voiceboxClient.generateAudio(text, store.activeProfileId);
+        const audioData = await getActiveProvider().generateAudio(text, store.activeProfileId);
         buffer = await decodeAudio(audioData);
       }
 
@@ -166,7 +166,8 @@ export function useAudioStream() {
 
     } catch (error: any) {
       console.error("[Audio Composable] Playback error:", error);
-      store.setError("Failed to play audio. Voicebox might be offline.");
+      store.setError("Audio source unreachable. Open Settings to configure.");
+      store.setProviderHealthy(false);
       store.stop();
     } finally {
       isLoading.value = false;

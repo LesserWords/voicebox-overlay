@@ -9,6 +9,18 @@ export interface VoiceProfile {
 
 export type PlaybackState = "idle" | "playing" | "paused" | "stopped";
 
+export interface AppConfig {
+  shortcut: string;
+  provider: string;
+  api_url: string;
+}
+
+export const DEFAULT_CONFIG: AppConfig = {
+  shortcut: "alt+shift+space",
+  provider: "voicebox",
+  api_url: "http://localhost:17493",
+};
+
 export const usePlayerStore = defineStore("player", {
   state: () => ({
     textChunks: [] as string[],
@@ -16,9 +28,11 @@ export const usePlayerStore = defineStore("player", {
     playbackState: "idle" as PlaybackState,
     availableProfiles: [] as VoiceProfile[],
     activeProfileId: "" as string,
-    isMockMode: false,
     errorMessage: "",
     rawText: "",
+    /** Last health check result. False = block playback, show config prompt. */
+    providerHealthy: false,
+    config: { ...DEFAULT_CONFIG } as AppConfig,
   }),
   getters: {
     currentChunk(state): string {
@@ -26,6 +40,10 @@ export const usePlayerStore = defineStore("player", {
     },
     hasChunks(state): boolean {
       return state.textChunks.length > 0;
+    },
+    /** Play button enabled only when chunks loaded AND backend reachable. */
+    canPlay(state): boolean {
+      return state.textChunks.length > 0 && state.providerHealthy;
     },
   },
   actions: {
@@ -38,8 +56,10 @@ export const usePlayerStore = defineStore("player", {
       this.errorMessage = "";
     },
     play() {
-      if (this.hasChunks) {
+      if (this.hasChunks && this.providerHealthy) {
         this.playbackState = "playing";
+      } else if (!this.providerHealthy) {
+        this.setError("Audio source unreachable. Open Settings to configure.");
       }
     },
     pause() {
@@ -65,8 +85,12 @@ export const usePlayerStore = defineStore("player", {
     },
     setAvailableProfiles(profiles: VoiceProfile[]) {
       this.availableProfiles = profiles;
-      if (profiles.length > 0 && !this.activeProfileId) {
+      // Reset active profile if the current one no longer exists (provider switched)
+      if (profiles.length > 0 && !profiles.some((p) => p.id === this.activeProfileId)) {
         this.activeProfileId = profiles[0].id;
+      }
+      if (profiles.length === 0) {
+        this.activeProfileId = "";
       }
     },
     setActiveProfileId(id: string) {
@@ -77,6 +101,12 @@ export const usePlayerStore = defineStore("player", {
     },
     clearError() {
       this.errorMessage = "";
+    },
+    setProviderHealthy(ok: boolean) {
+      this.providerHealthy = ok;
+    },
+    setConfig(cfg: AppConfig) {
+      this.config = cfg;
     },
   },
 });

@@ -75,9 +75,9 @@ const handlePrev = () => {
       <button
         v-if="store.playbackState !== 'playing'"
         @click="handlePlay"
-        :disabled="!store.hasChunks"
+        :disabled="!store.canPlay"
         class="p-3.5 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 disabled:opacity-50 disabled:pointer-events-none shadow-lg shadow-amber-500/20 hover:scale-105 active:scale-95 transition-all"
-        title="Play"
+        :title="store.providerHealthy ? 'Play' : 'Audio source unreachable — open Settings'"
       >
         <Play class="h-5 w-5 fill-slate-950" />
       </button>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted, onUnmounted } from "vue";
-import { GripHorizontal, X, Clipboard, Edit2, BookOpen, AlertCircle, Settings } from "@lucide/vue";
+import { GripHorizontal, X, Clipboard, Edit2, BookOpen, AlertCircle, Settings, Power } from "@lucide/vue";
 import { usePlayerStore } from "../stores/playerStore";
 import { useSystemBridge, isTauri } from "../composables/useSystemBridge";
 import { useAudioStream } from "../composables/useAudioStream";
@@ -8,7 +8,7 @@ import AudioControls from "./AudioControls.vue";
 import SettingsPanel from "./SettingsPanel.vue";
 
 const store = usePlayerStore();
-const { hideWindow, readClipboardText } = useSystemBridge();
+const { hideWindow, quitApp, readClipboardText } = useSystemBridge();
 const { isLoading } = useAudioStream();
 
 const isEditing = ref(false);
@@ -35,9 +35,12 @@ onUnmounted(() => {
 // Trigger manual clipboard read
 const pasteFromClipboard = async () => {
   const text = await readClipboardText();
-  if (text) {
+  if (text && text.trim().length > 0) {
     store.loadText(text);
     localText.value = text;
+    store.clearError();
+  } else {
+    store.setError("Clipboard is empty or unreadable.");
   }
 };
 
@@ -128,24 +131,42 @@ watch(() => store.textChunks, () => {
           <Settings class="h-4 w-4" />
         </button>
 
-        <!-- Hide Window Button -->
+        <!-- Hide (keeps process alive; reopen via tray or hotkey) -->
         <button
           @click="hideWindow"
-          class="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 active:scale-95 transition-all"
-          title="Hide Overlay"
+          class="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 active:scale-95 transition-all"
+          title="Hide Overlay (process keeps running in tray)"
         >
           <X class="h-4 w-4" />
+        </button>
+
+        <!-- Quit (kills background process) -->
+        <button
+          @click="quitApp"
+          class="p-1.5 rounded-lg text-slate-400 hover:text-red-400 hover:bg-red-500/10 active:scale-95 transition-all"
+          title="Quit (exit background process)"
+        >
+          <Power class="h-4 w-4" />
         </button>
       </div>
     </header>
 
     <!-- Error Banner -->
-    <div 
-      v-if="store.errorMessage" 
-      class="bg-red-500/15 border-b border-red-500/25 px-4 py-2 flex items-center space-x-2 text-xs text-red-300 shrink-0"
+    <div
+      v-if="store.errorMessage"
+      class="bg-red-500/15 border-b border-red-500/25 px-4 py-2 flex items-center justify-between gap-2 text-xs text-red-300 shrink-0"
     >
-      <AlertCircle class="h-4 w-4 shrink-0 text-red-400" />
-      <span class="truncate">{{ store.errorMessage }}</span>
+      <div class="flex items-center space-x-2 min-w-0">
+        <AlertCircle class="h-4 w-4 shrink-0 text-red-400" />
+        <span class="truncate">{{ store.errorMessage }}</span>
+      </div>
+      <button
+        v-if="!store.providerHealthy"
+        @click="isSettingsOpen = true"
+        class="shrink-0 px-2 py-0.5 rounded-md bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-[10px] font-semibold uppercase tracking-wider"
+      >
+        Configure
+      </button>
     </div>
 
     <!-- Content Workspace -->

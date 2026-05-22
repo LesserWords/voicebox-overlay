@@ -24,8 +24,9 @@ describe("playerStore", () => {
     expect(store.playbackState).toBe("idle");
   });
 
-  it("should update playback state to playing when play is called with chunks", () => {
+  it("should update playback state to playing when play is called with chunks and healthy provider", () => {
     const store = usePlayerStore();
+    store.setProviderHealthy(true);
     store.play();
     expect(store.playbackState).toBe("idle"); // shouldn't play empty
 
@@ -34,8 +35,18 @@ describe("playerStore", () => {
     expect(store.playbackState).toBe("playing");
   });
 
+  it("should block play when provider is unhealthy and set error", () => {
+    const store = usePlayerStore();
+    store.loadText("Sentence one.");
+    store.setProviderHealthy(false);
+    store.play();
+    expect(store.playbackState).toBe("idle");
+    expect(store.errorMessage).toMatch(/unreachable/i);
+  });
+
   it("should pause and stop correctly", () => {
     const store = usePlayerStore();
+    store.setProviderHealthy(true);
     store.loadText("Sentence one. Sentence two.");
     store.play();
     expect(store.playbackState).toBe("playing");
@@ -50,6 +61,7 @@ describe("playerStore", () => {
 
   it("should navigate chunks and stop at the end", () => {
     const store = usePlayerStore();
+    store.setProviderHealthy(true);
     store.loadText("Sentence one. Sentence two.");
     store.play();
 

@@ -1,31 +1,71 @@
 use std::fs;
 use std::sync::Mutex;
+use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const DEFAULT_SHORTCUT: &str = "alt+shift+space";
+const DEFAULT_PROVIDER: &str = "voicebox";
+const DEFAULT_API_URL: &str = "http://localhost:17493";
 
-struct ShortcutSetting(Mutex<String>);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+struct AppConfig {
+    shortcut: String,
+    provider: String,
+    api_url: String,
+}
 
-fn config_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            shortcut: DEFAULT_SHORTCUT.to_string(),
+            provider: DEFAULT_PROVIDER.to_string(),
+            api_url: DEFAULT_API_URL.to_string(),
+        }
+    }
+}
+
+struct ConfigState(Mutex<AppConfig>);
+
+fn config_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
     let dir = app.path().app_config_dir().ok()?;
     let _ = fs::create_dir_all(&dir);
-    Some(dir.join("shortcut.txt"))
+    Some(dir.join("config.json"))
 }
 
-fn load_shortcut(app: &tauri::AppHandle) -> String {
-    config_file(app)
-        .and_then(|p| fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_SHORTCUT.to_string())
+fn load_config(app: &tauri::AppHandle) -> AppConfig {
+    let path = match config_path(app) {
+        Some(p) => p,
+        None => return AppConfig::default(),
+    };
+    match fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => {
+            // Migrate legacy shortcut.txt if present
+            if let Some(dir) = app.path().app_config_dir().ok() {
+                let legacy = dir.join("shortcut.txt");
+                if let Ok(content) = fs::read_to_string(&legacy) {
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        let mut cfg = AppConfig::default();
+                        cfg.shortcut = trimmed;
+                        let _ = fs::remove_file(&legacy);
+                        return cfg;
+                    }
+                }
+            }
+            AppConfig::default()
+        }
+    }
 }
 
-fn save_shortcut(app: &tauri::AppHandle, shortcut: &str) -> Result<(), String> {
-    let p = config_file(app).ok_or_else(|| "config dir unavailable".to_string())?;
-    fs::write(p, shortcut).map_err(|e| e.to_string())
+fn save_config(app: &tauri::AppHandle, cfg: &AppConfig) -> Result<(), String> {
+    let path = config_path(app).ok_or_else(|| "config dir unavailable".to_string())?;
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    fs::write(path, json).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -44,31 +84,49 @@ fn hide_window(app_handle: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn get_shortcut(state: State<ShortcutSetting>) -> String {
+fn quit_app(app_handle: tauri::AppHandle) {
+    app_handle.exit(0);
+}
+
+#[tauri::command]
+fn get_config(state: State<ConfigState>) -> AppConfig {
     state.0.lock().unwrap().clone()
 }
 
 #[tauri::command]
-fn set_shortcut(
+fn set_config(
     app_handle: tauri::AppHandle,
-    state: State<ShortcutSetting>,
-    shortcut: String,
-) -> Result<(), String> {
-    let trimmed = shortcut.trim().to_string();
-    if trimmed.is_empty() {
+    state: State<ConfigState>,
+    config: AppConfig,
+) -> Result<AppConfig, String> {
+    let mut new_cfg = config;
+    new_cfg.shortcut = new_cfg.shortcut.trim().to_string();
+    new_cfg.provider = new_cfg.provider.trim().to_string();
+    new_cfg.api_url = new_cfg.api_url.trim().to_string();
+
+    if new_cfg.shortcut.is_empty() {
         return Err("shortcut is empty".to_string());
     }
-    let gs = app_handle.global_shortcut();
+    if new_cfg.provider.is_empty() {
+        return Err("provider is empty".to_string());
+    }
+
     let current = state.0.lock().unwrap().clone();
-    let _ = gs.unregister(current.as_str());
-    gs.register(trimmed.as_str()).map_err(|e| {
-        // Re-register old one on failure so user keeps a working shortcut
-        let _ = gs.register(current.as_str());
-        e.to_string()
-    })?;
-    save_shortcut(&app_handle, &trimmed)?;
-    *state.0.lock().unwrap() = trimmed;
-    Ok(())
+
+    // Re-register shortcut only if it changed
+    if new_cfg.shortcut != current.shortcut {
+        let gs = app_handle.global_shortcut();
+        let _ = gs.unregister(current.shortcut.as_str());
+        gs.register(new_cfg.shortcut.as_str()).map_err(|e| {
+            let _ = gs.register(current.shortcut.as_str());
+            format!("shortcut register failed: {}", e)
+        })?;
+    }
+
+    save_config(&app_handle, &new_cfg)?;
+    *state.0.lock().unwrap() = new_cfg.clone();
+    let _ = app_handle.emit("config-updated", new_cfg.clone());
+    Ok(new_cfg)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -87,13 +145,13 @@ pub fn run() {
         )
         .setup(|app| {
             let handle = app.handle().clone();
-            let shortcut = load_shortcut(&handle);
-            app.manage(ShortcutSetting(Mutex::new(shortcut.clone())));
+            let cfg = load_config(&handle);
+            app.manage(ConfigState(Mutex::new(cfg.clone())));
 
-            if let Err(e) = app.global_shortcut().register(shortcut.as_str()) {
+            if let Err(e) = app.global_shortcut().register(cfg.shortcut.as_str()) {
                 eprintln!(
                     "[voicebox-overlay] failed to register shortcut '{}': {}",
-                    shortcut, e
+                    cfg.shortcut, e
                 );
             }
 
@@ -145,8 +203,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             show_window,
             hide_window,
-            get_shortcut,
-            set_shortcut
+            quit_app,
+            get_config,
+            set_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

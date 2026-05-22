@@ -1,8 +1,5 @@
-import { usePlayerStore } from "../stores/playerStore";
+import { usePlayerStore, type AppConfig, DEFAULT_CONFIG } from "../stores/playerStore";
 
-/**
- * Checks if the application is currently running inside the Tauri shell container.
- */
 export const isTauri = (): boolean => {
   return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ !== undefined;
 };
@@ -10,11 +7,6 @@ export const isTauri = (): boolean => {
 export function useSystemBridge() {
   const store = usePlayerStore();
 
-  /**
-   * Helper to safely read from the system clipboard.
-   * If in Tauri, uses tauri-plugin-clipboard-manager.
-   * If in browser, falls back to standard navigator.clipboard or dummy fallback text.
-   */
   const readClipboardText = async (): Promise<string> => {
     if (isTauri()) {
       try {
@@ -25,125 +17,88 @@ export function useSystemBridge() {
         console.error("[System Bridge] Failed to read Tauri clipboard:", err);
         return "";
       }
-    } else {
-      try {
-        if (navigator.clipboard) {
-          return await navigator.clipboard.readText();
-        }
-      } catch (err) {
-        console.warn("[System Bridge] Browser clipboard permission denied or not supported. Using default fallback text.");
-      }
-      return "This is a fallback text from your system clipboard. The voicebox overlay is running in standard browser mock mode. It has loaded your paragraph chunks successfully!";
     }
+    try {
+      if (navigator.clipboard) return await navigator.clipboard.readText();
+    } catch {
+      console.warn("[System Bridge] Browser clipboard denied. Using fallback text.");
+    }
+    return "This is fallback text from your system clipboard. The voicebox overlay is in browser mock mode.";
   };
 
-  /**
-   * Invokes native Rust commands to show the window.
-   */
   const showWindow = async () => {
-    if (isTauri()) {
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("show_window");
-      } catch (err) {
-        console.error("[System Bridge] Failed to invoke show_window:", err);
-      }
-    } else {
-      console.log("[System Bridge] Mock Show Window triggered");
-    }
-  };
-
-  /**
-   * Reads current global shortcut from Rust.
-   */
-  const getShortcut = async (): Promise<string> => {
-    if (!isTauri()) return "alt+shift+space";
+    if (!isTauri()) return;
     try {
       const { invoke } = await import("@tauri-apps/api/core");
-      return await invoke<string>("get_shortcut");
+      await invoke("show_window");
     } catch (err) {
-      console.error("[System Bridge] Failed to get shortcut:", err);
-      return "";
+      console.error("[System Bridge] show_window failed:", err);
     }
   };
 
-  /**
-   * Updates global shortcut via Rust. Throws on failure (invalid combo / conflict).
-   */
-  const setShortcut = async (shortcut: string): Promise<void> => {
-    if (!isTauri()) return;
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("set_shortcut", { shortcut });
-  };
-
-  /**
-   * Invokes native Rust commands to hide the window.
-   */
   const hideWindow = async () => {
-    if (isTauri()) {
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("hide_window");
-      } catch (err) {
-        console.error("[System Bridge] Failed to invoke hide_window:", err);
-      }
-    } else {
-      console.log("[System Bridge] Mock Hide Window triggered");
+    if (!isTauri()) return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("hide_window");
+    } catch (err) {
+      console.error("[System Bridge] hide_window failed:", err);
     }
   };
 
-  /**
-   * Co-ordinates the shortcut action:
-   * 1. Read clipboard
-   * 2. Populate store and split into sentences
-   * 3. Show window
-   * 4. Trigger audio streaming
-   */
+  const quitApp = async () => {
+    if (!isTauri()) return;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("quit_app");
+    } catch (err) {
+      console.error("[System Bridge] quit_app failed:", err);
+    }
+  };
+
+  const getConfig = async (): Promise<AppConfig> => {
+    if (!isTauri()) return { ...DEFAULT_CONFIG };
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return await invoke<AppConfig>("get_config");
+    } catch (err) {
+      console.error("[System Bridge] get_config failed:", err);
+      return { ...DEFAULT_CONFIG };
+    }
+  };
+
+  const setConfig = async (config: AppConfig): Promise<AppConfig> => {
+    if (!isTauri()) return config;
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<AppConfig>("set_config", { config });
+  };
+
   const handleShortcutTriggered = async () => {
-    console.log("[System Bridge] Hotkey event received!");
     const text = await readClipboardText();
-    if (text) {
-      store.loadText(text);
-      await showWindow();
-      store.play();
-    }
+    if (!text) return;
+    store.loadText(text);
+    await showWindow();
+    store.play();
   };
 
-  /**
-   * Initializes listeners.
-   * Registers Tauri event bindings or fallback browser hotkeys.
-   */
   const initListeners = async () => {
     if (isTauri()) {
       try {
         const { listen } = await import("@tauri-apps/api/event");
-        const { getCurrentWindow } = await import("@tauri-apps/api/window");
-
-        // 1. Listen for shortcut triggered event from Rust backend
-        await listen("shortcut-triggered", () => {
-          handleShortcutTriggered();
-        });
-
-        // 2. Listen for window blur (focus loss) to auto-hide the overlay
-        const appWindow = getCurrentWindow();
-        await appWindow.listen("tauri://blur", () => {
-          console.log("[System Bridge] Window lost focus, hiding window...");
-          hideWindow();
-        });
-
-        console.log("[System Bridge] Tauri system listeners registered successfully.");
+        await listen("shortcut-triggered", () => handleShortcutTriggered());
+        // NOTE: tauri://blur auto-hide removed — widget now stays on screen
+        // until user explicitly closes it (X = hide, tray Quit = exit process).
+        console.log("[System Bridge] Tauri listeners registered.");
       } catch (err) {
-        console.error("[System Bridge] Failed to initialize Tauri event listeners:", err);
+        console.error("[System Bridge] init listeners failed:", err);
       }
     } else {
-      // Browser fallback hotkey: Alt + Shift + Space
       window.addEventListener("keydown", (e) => {
         if (e.altKey && e.shiftKey && e.code === "Space") {
           e.preventDefault();
           handleShortcutTriggered();
         }
       });
-      console.log("[System Bridge] Browser fallback keyboard listener registered: Alt+Shift+Space");
     }
   };
 
@@ -151,8 +106,9 @@ export function useSystemBridge() {
     initListeners,
     showWindow,
     hideWindow,
+    quitApp,
     readClipboardText,
-    getShortcut,
-    setShortcut,
+    getConfig,
+    setConfig,
   };
 }
